@@ -3,8 +3,6 @@ import pandas as pd
 import numpy as np
 import joblib
 import matplotlib.pyplot as plt
-from sklearn.metrics import accuracy_score, classification_report
-import json
 
 # ---------------------------
 # Load model Random Forest
@@ -17,10 +15,8 @@ rf_model = joblib.load("rf_clf.pkl")
 st.sidebar.title("Evaluasi Model Random Forest")
 st.sidebar.markdown("Ringkasan evaluasi model pada data test:")
 
-# Misal hasil evaluasi model sudah disimpan atau dihitung sebelumnya
-# Anda bisa ganti nilai-nilai ini dengan hasil sebenarnya
 accuracy = 0.8628
-class_counts = {0: 735, 1: 136, 2: 81}  # contoh distribusi test set
+class_counts = {0: 735, 1: 136, 2: 81}
 target_names = {0: "Sehat", 1: "Nyeri rendah", 2: "Nyeri tinggi"}
 
 st.sidebar.metric("Akurasi", f"{accuracy*100:.2f}%")
@@ -38,17 +34,19 @@ st.title("Prediksi Tingkat Nyeri dengan EMOPain (Random Forest)")
 st.write("Pilih metode input data di sidebar.")
 
 # ---------------------------
-# Input Manual 30 Channel
+# Pilihan input
 # ---------------------------
 input_type = st.sidebar.radio("Metode input data:", ["Upload CSV", "Input Manual 30 Channel"])
 
+# ---------------------------
+# Input Manual 30 Channel
+# ---------------------------
 if input_type == "Input Manual 30 Channel":
     st.subheader("Input Manual 30 Channel")
     st.write("Masukkan data tiap channel (1–200 titik). Channel kosong akan otomatis diisi default 0.5.")
 
     channel_data = []
 
-    # Expander untuk input semua 30 channel
     with st.expander("Klik untuk menampilkan input semua 30 channel"):
         for group_start in range(0, 30, 5):  # 5 channel per baris
             cols = st.columns(5)
@@ -74,12 +72,12 @@ if input_type == "Input Manual 30 Channel":
     data_array = np.array(channel_data).flatten().reshape(1, -1)
     data = pd.DataFrame(data_array)
 
-    # Preview channel secara ringkas
+    # Preview channel
     st.subheader("Preview Channel (Ringkas)")
     preview_df = pd.DataFrame(channel_data).T
     st.dataframe(preview_df, height=200)
 
-    # Visualisasi channel secara efisien
+    # Visualisasi channel
     st.subheader("Visualisasi Channel")
     n_rows = 6
     n_cols = 5
@@ -98,14 +96,40 @@ if input_type == "Input Manual 30 Channel":
 # Upload CSV
 # ---------------------------
 elif input_type == "Upload CSV":
-    uploaded_file = st.sidebar.file_uploader("Upload CSV (1 row × 6000 fitur)", type=["csv"])
+    uploaded_file = st.sidebar.file_uploader("Upload CSV (1 row × 6000 fitur + label optional)", type=["csv"])
     if uploaded_file is not None:
-        data = pd.read_csv(uploaded_file)
+        data_raw = pd.read_csv(uploaded_file)
         st.subheader("Data Sampel")
-        st.dataframe(data.head())
+        st.dataframe(data_raw.head())
+
+        # Pisahkan label jika ada
+        if 'label' in data_raw.columns:
+            labels = data_raw['label']
+            data = data_raw.drop(columns=['label'])
+            st.write("Kolom 'label' dihapus dari input fitur untuk prediksi.")
+        else:
+            data = data_raw
+
+        # Preview (seluruh channel)
+        st.subheader("Preview Data (Ringkas)")
+        preview_df = pd.DataFrame(data.values.reshape(30, 200).T, columns=[f"Ch{i+1}" for i in range(30)])
+        st.dataframe(preview_df, height=200)
+
+        # Visualisasi semua 30 channel
+        st.subheader("Visualisasi Semua 30 Channel")
+        fig, axes = plt.subplots(6, 5, figsize=(15, 8), sharex=True)
+        axes = axes.flatten()
+        channel_values = data.values.reshape(30, 200)
+        for i, ax in enumerate(axes):
+            if i < 30:
+                ax.plot(channel_values[i], color="#1f77b4")
+                ax.set_title(f"Ch {i+1}")
+            ax.set_xticks([])
+            ax.set_yticks([])
+        plt.tight_layout()
+        st.pyplot(fig)
     else:
         data = None
-
 # ---------------------------
 # Prediksi
 # ---------------------------
