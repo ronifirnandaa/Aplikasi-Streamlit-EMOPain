@@ -10,22 +10,40 @@ import matplotlib.pyplot as plt
 rf_model = joblib.load("rf_clf.pkl")
 
 # ---------------------------
-# Sidebar: Info Model
+# Load data referensi (UNTUK GENERATOR)
 # ---------------------------
-st.sidebar.title("Evaluasi Model Random Forest")
-st.sidebar.markdown("Ringkasan evaluasi model pada data test:")
+@st.cache_data
+def load_reference_data():
+    df = pd.read_csv("manual_testing_data.csv")
+    X = df.drop(columns=["label"])
+    y = df["label"]
+    return X, y
 
-accuracy = 0.8628
-class_counts = {0: 735, 1: 136, 2: 81}
-target_names = {0: "Sehat", 1: "Nyeri rendah", 2: "Nyeri tinggi"}
+X_ref, y_ref = load_reference_data()
 
-st.sidebar.metric("Akurasi", f"{accuracy*100:.2f}%")
-st.sidebar.markdown("Distribusi kelas pada test set:")
-for cls, count in class_counts.items():
-    st.sidebar.write(f"{target_names[cls]}: {count} sampel")
+LABEL_NAME = {
+    0: "Sehat",
+    1: "Nyeri rendah",
+    2: "Nyeri tinggi"
+}
 
-st.sidebar.markdown("---")
-st.sidebar.write("Gunakan menu utama untuk input data dan prediksi.")
+# ---------------------------
+# Generator berbasis DATA ASLI
+# ---------------------------
+def generate_from_real_data(label, noise_scale=0.02):
+    idx = np.random.choice(y_ref[y_ref == label].index)
+    base_sample = X_ref.loc[idx].values.copy()
+
+    noise = np.random.normal(
+        loc=0,
+        scale=noise_scale * np.std(base_sample),
+        size=base_sample.shape
+    )
+
+    generated = base_sample + noise
+    generated = np.clip(generated, 0, 1)
+
+    return generated.reshape(30, 200)
 
 # ---------------------------
 # Main Title
@@ -34,110 +52,158 @@ st.title("Prediksi Tingkat Nyeri dengan EMOPain (Random Forest)")
 st.write("Pilih metode input data di sidebar.")
 
 # ---------------------------
-# Pilihan input
+# Sidebar: Info Model
 # ---------------------------
-input_type = st.sidebar.radio("Metode input data:", ["Upload CSV", "Input Manual 30 Channel"])
+st.sidebar.title("Evaluasi Model Random Forest")
+
+accuracy = 0.8628
+st.sidebar.metric("Akurasi", f"{accuracy*100:.2f}%")
+
+st.sidebar.markdown("---")
+
+input_type = st.sidebar.radio(
+    "Metode input data:",
+    ["Upload CSV", "Input Manual 30 Channel"]
+)
 
 # ---------------------------
-# Input Manual 30 Channel
+# INPUT MANUAL + GENERATOR
 # ---------------------------
 if input_type == "Input Manual 30 Channel":
-    st.subheader("Input Manual 30 Channel")
-    st.write("Masukkan data tiap channel (1–200 titik). Channel kosong akan otomatis diisi default 0.5.")
 
+    if "channel_data" not in st.session_state:
+        st.session_state.channel_data = [[0.5]*200 for _ in range(30)]
+
+    left, right = st.columns([3, 1])
+
+    # ===== GENERATOR =====
+    with right:
+        st.subheader("Generate Data")
+
+        gen_label = st.selectbox(
+            "Label sumber data",
+            [0, 1, 2],
+            format_func=lambda x: f"{x} – {LABEL_NAME[x]}"
+        )
+
+        noise_level = st.slider(
+            "Noise level",
+            0.0, 0.1, 0.02, 0.01
+        )
+
+        if st.button("Generate Data"):
+            generated = generate_from_real_data(gen_label, noise_level)
+            st.session_state.channel_data = generated.tolist()
+            st.success("Data berhasil digenerate")
+
+    # ===== INPUT MANUAL (5 KOLOM / BARIS) =====
     channel_data = []
 
-    with st.expander("Klik untuk menampilkan input semua 30 channel"):
-        for group_start in range(0, 30, 5):  # 5 channel per baris
-            cols = st.columns(5)
-            for i, ch in enumerate(range(group_start, min(group_start+5, 30))):
-                with cols[i]:
-                    user_input = st.text_area(
-                        f"Ch {ch+1}",
-                        value=",".join(["0.5"]*200),
-                        height=80
-                    )
+    with left:
+        st.subheader("Input Manual 30 Channel")
+
+        with st.expander("Tampilkan Input Channel"):
+            for row in range(6):
+                cols = st.columns(5)
+                for col in range(5):
+                    ch_idx = row * 5 + col
+
+                    with cols[col]:
+                        text = ",".join(
+                            f"{x:.4f}" for x in st.session_state.channel_data[ch_idx]
+                        )
+                        user_input = st.text_area(
+                            f"Ch {ch_idx + 1}",
+                            value=text,
+                            height=70
+                        )
+
                     try:
                         values = [float(x.strip()) for x in user_input.split(",")]
                         if len(values) < 200:
-                            values += [0.5]*(200 - len(values))
+                            values += [0.5] * (200 - len(values))
                         elif len(values) > 200:
                             values = values[:200]
                     except:
-                        st.error(f"Format salah di Channel {ch+1}! Menggunakan default 0.5")
-                        values = [0.5]*200
+                        values = [0.5] * 200
+
                     channel_data.append(values)
 
-    # Flatten data untuk prediksi
-    data_array = np.array(channel_data).flatten().reshape(1, -1)
-    data = pd.DataFrame(data_array)
+    st.session_state.channel_data = channel_data
 
-    # Preview channel
-    st.subheader("Preview Channel (Ringkas)")
-    preview_df = pd.DataFrame(channel_data).T
-    st.dataframe(preview_df, height=200)
+    # ===== DATA UNTUK PREDIKSI =====
+    data = pd.DataFrame(
+        np.array(channel_data).flatten().reshape(1, -1)
+    )
 
-    # Visualisasi channel
-    st.subheader("Visualisasi Channel")
-    n_rows = 6
-    n_cols = 5
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 2*n_rows), sharex=True)
+    # ===== PREVIEW =====
+    st.subheader("Preview Data")
+    st.dataframe(pd.DataFrame(channel_data).T, height=200)
+
+    # ===== VISUALISASI =====
+    st.subheader("Visualisasi 30 Channel")
+    fig, axes = plt.subplots(6, 5, figsize=(15, 8))
     axes = axes.flatten()
+
     for i, ax in enumerate(axes):
-        if i < len(channel_data):
-            ax.plot(channel_data[i], color="#1f77b4")
-            ax.set_title(f"Ch {i+1}")
+        ax.plot(channel_data[i])
+        ax.set_title(f"Ch {i+1}")
         ax.set_xticks([])
         ax.set_yticks([])
+
     plt.tight_layout()
     st.pyplot(fig)
 
-# ---------------------------
-# Upload CSV
-# ---------------------------
+# =========================================================
+# UPLOAD CSV (TIDAK DIUBAH)
+# =========================================================
 elif input_type == "Upload CSV":
-    uploaded_file = st.sidebar.file_uploader("Upload CSV (1 row × 6000 fitur + label optional)", type=["csv"])
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload CSV (1 row × 6000 fitur + label optional)",
+        type=["csv"]
+    )
+
     if uploaded_file is not None:
         data_raw = pd.read_csv(uploaded_file)
         st.subheader("Data Sampel")
         st.dataframe(data_raw.head())
 
-        # Pisahkan label jika ada
         if 'label' in data_raw.columns:
-            labels = data_raw['label']
             data = data_raw.drop(columns=['label'])
-            st.write("Kolom 'label' dihapus dari input fitur untuk prediksi.")
+            st.write("Kolom 'label' dihapus dari input fitur.")
         else:
             data = data_raw
 
-        # Preview (seluruh channel)
         st.subheader("Preview Data (Ringkas)")
-        preview_df = pd.DataFrame(data.values.reshape(30, 200).T, columns=[f"Ch{i+1}" for i in range(30)])
+        preview_df = pd.DataFrame(
+            data.values.reshape(30, 200).T,
+            columns=[f"Ch{i+1}" for i in range(30)]
+        )
         st.dataframe(preview_df, height=200)
 
-        # Visualisasi semua 30 channel
         st.subheader("Visualisasi Semua 30 Channel")
         fig, axes = plt.subplots(6, 5, figsize=(15, 8), sharex=True)
         axes = axes.flatten()
+
         channel_values = data.values.reshape(30, 200)
         for i, ax in enumerate(axes):
-            if i < 30:
-                ax.plot(channel_values[i], color="#1f77b4")
-                ax.set_title(f"Ch {i+1}")
+            ax.plot(channel_values[i])
+            ax.set_title(f"Ch {i+1}")
             ax.set_xticks([])
             ax.set_yticks([])
+
         plt.tight_layout()
         st.pyplot(fig)
     else:
         data = None
+
+
 # ---------------------------
-# Prediksi
+# PREDIKSI
 # ---------------------------
+st.markdown("---")
 if st.button("Prediksi") and data is not None:
-    try:
-        X_input = data.values.astype(np.float64)
-        pred = rf_model.predict(X_input)
-        label_mapping = {0: "Sehat", 1: "Nyeri rendah", 2: "Nyeri tinggi"}
-        st.success(f"Hasil Prediksi: {pred[0]} → {label_mapping[pred[0]]}")
-    except Exception as e:
-        st.error(f"Terjadi kesalahan: {e}")
+    X_input = data.values.astype(np.float64)
+    pred = rf_model.predict(X_input)[0]
+
+    st.success(f"Hasil Prediksi: {pred} → {LABEL_NAME[pred]}")
